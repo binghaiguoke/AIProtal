@@ -19,6 +19,7 @@ class KnowledgeChunk:
     title: str
     chunk_id: str
     content: str
+    source_type: str = "static"
 
 
 @dataclass(slots=True)
@@ -28,6 +29,7 @@ class KnowledgeSearchHit:
     chunk_id: str
     content: str
     score: float
+    source_type: str = "static"
 
 
 @dataclass(slots=True)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 from threading import Lock
@@ -64,22 +65,62 @@ class LocalKnowledgeService:
 
         effective_top_k = top_k or self._config.default_top_k
         vector = self._embedder.encode_text(query)
-        scores, indices = self._store.search(vector, effective_top_k)
+        scores, indices = self._store.search(vector, max(effective_top_k * 3, effective_top_k))
         hits: list[KnowledgeSearchHit] = []
         for score, index in zip(scores[0], indices[0], strict=False):
             if index < 0 or index >= len(self._chunks):
                 continue
             chunk = self._chunks[int(index)]
+            adjusted_score = float(score)
+            if chunk.source_type == "upload":
+                adjusted_score += 0.1
             hits.append(
                 KnowledgeSearchHit(
                     source_path=chunk.source_path,
                     title=chunk.title,
                     chunk_id=chunk.chunk_id,
                     content=chunk.content,
-                    score=float(score),
+                    score=adjusted_score,
+                    source_type=chunk.source_type,
                 )
             )
-        return hits
+        hits.sort(key=lambda item: (item.source_type != "upload", -item.score))
+        return hits[:effective_top_k]
+
+    def build_readable_answer(self, query: str, hits: list[KnowledgeSearchHit]) -> str:
+        if not hits:
+            return "未检索到与问题直接相关的知识内容，请尝试更具体的提问或先上传相关文件。"
+
+        upload_hits = [hit for hit in hits if hit.source_type == "upload"]
+        prioritized_hits = upload_hits or hits
+        scope_text = "已上传文件" if upload_hits else "知识库文档"
+
+        grouped: dict[str, list[KnowledgeSearchHit]] = {}
+        for hit in prioritized_hits:
+            grouped.setdefault(hit.source_path, []).append(hit)
+
+        lines = [f"根据{scope_text}检索结果，围绕“{query}”整理如下："]
+        for source_path, source_hits in list(grouped.items())[:3]:
+            first_hit = source_hits[0]
+            summary = self._summarize_hit_content(first_hit.content)
+            lines.append(f"1. 来源：{source_path}")
+            lines.append(f"   标题：{first_hit.title}")
+            lines.append(f"   要点：{summary}")
+
+        if upload_hits:
+            lines.append("以上内容优先依据你上传的文件整理。")
+        else:
+            lines.append("当前未命中上传文件内容，以上依据系统默认知识库整理。")
+        return "\n".join(lines)
+
+    def _summarize_hit_content(self, content: str) -> str:
+        normalized = re.sub(r"\s+", " ", content).strip()
+        if not normalized:
+            return "该片段没有可提炼的文本内容。"
+        sentences = re.split(r"(?<=[。！？.!?])\s+", normalized)
+        chosen = [sentence.strip() for sentence in sentences if sentence.strip()][:2]
+        summary = " ".join(chosen) if chosen else normalized[:220]
+        return summary[:240]
 
     def save_upload(self, file_name: str, content: bytes) -> tuple[KnowledgeFileRecord, ExtractionResult]:
         extension = Path(file_name).suffix.lower()

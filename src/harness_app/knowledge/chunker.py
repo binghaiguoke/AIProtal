@@ -33,6 +33,7 @@ class MarkdownChunker:
                         title=title,
                         chunk_id=chunk_id,
                         content=window_content,
+                        source_type=document.source_type,
                     )
                 )
         return chunks

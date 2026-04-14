@@ -102,10 +102,14 @@ def create_app() -> FastAPI:
         if not payload.query.strip():
             raise HTTPException(status_code=400, detail="query cannot be empty")
         hits = knowledge_service.search(payload.query, payload.top_k)
+        answer = knowledge_service.build_readable_answer(payload.query, hits)
+        answer_scope = "uploaded_files" if any(hit.source_type == "upload" for hit in hits) else "default"
         return KnowledgeSearchResponse(
             query=payload.query,
             total_hits=len(hits),
             indexed_chunk_count=knowledge_service.indexed_chunk_count,
+            answer=answer,
+            answer_scope=answer_scope,
             sources=[
                 KnowledgeSourceItem(
                     source_path=hit.source_path,

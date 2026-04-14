@@ -40,6 +40,7 @@ def test_knowledge_search_endpoint_returns_grounded_sources(monkeypatch):
     payload = response.json()
     assert payload["total_hits"] >= 1
     assert payload["indexed_chunk_count"] >= payload["total_hits"]
+    assert payload["answer"]
     assert payload["sources"][0]["source_path"] in {
         "README.md",
         "MYPORTAL_FUNCTION_ANALYSIS.zh-CN.md",
@@ -74,6 +75,30 @@ def test_agent_respond_uses_faiss_grounding(monkeypatch):
     assert "source=" in payload["tool_results"][0]
 
 
+def test_agent_respond_skip_tools_skips_faiss(monkeypatch):
+    monkeypatch.setenv("MYPORTAL_ENV_FILE", "missing.env")
+    monkeypatch.delenv("MYPORTAL_LLM_API_KEY", raising=False)
+    monkeypatch.delenv("ZHIPUAI_API_KEY", raising=False)
+    client = TestClient(create_app())
+
+    session_response = client.post("/sessions", json={"user_id": "skip-tools-user", "metadata": {}})
+    session_id = session_response.json()["session_id"]
+
+    response = client.post(
+        "/agent/respond",
+        json={
+            "user_id": "skip-tools-user",
+            "session_id": session_id,
+            "message": "请执行搜索并检索文档内容，查找 GLM 相关信息",
+            "channel": "http",
+            "metadata": {"skip_tools": True},
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["tool_results"] == []
+
+
 def test_knowledge_upload_list_and_search(monkeypatch, tmp_path):
     monkeypatch.setenv("MYPORTAL_ENV_FILE", "missing.env")
     monkeypatch.setenv("MYPORTAL_KNOWLEDGE_UPLOADS_DIR", str(tmp_path / "uploads"))
@@ -83,7 +108,7 @@ def test_knowledge_upload_list_and_search(monkeypatch, tmp_path):
 
     buffer = BytesIO()
     document = WordDocument()
-    document.add_paragraph("OpenHarness knowledge upload supports source-grounded search.")
+    document.add_paragraph("MyPortal knowledge upload supports source-grounded search.")
     document.save(buffer)
     buffer.seek(0)
 
@@ -109,4 +134,6 @@ def test_knowledge_upload_list_and_search(monkeypatch, tmp_path):
     assert search_response.status_code == 200
     search_payload = search_response.json()
     assert search_payload["total_hits"] >= 1
+    assert search_payload["answer_scope"] == "uploaded_files"
+    assert "以上内容优先依据你上传的文件整理" in search_payload["answer"]
     assert any("source-grounded search" in item["content"] for item in search_payload["sources"])

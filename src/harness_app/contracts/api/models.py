@@ -98,6 +98,8 @@ class KnowledgeSearchResponse(BaseModel):
     query: str
     total_hits: int
     indexed_chunk_count: int
+    answer: str = ""
+    answer_scope: str = "default"
     sources: list[KnowledgeSourceItem] = Field(default_factory=list)
 
 

@@ -70,6 +70,8 @@ export interface KnowledgeSearchResponse {
   query: string
   total_hits: number
   indexed_chunk_count: number
+  answer: string
+  answer_scope: string
   sources: KnowledgeSourceItem[]
 }
 
@@ -141,6 +143,8 @@ export function sendMessage(payload: {
   userId: string
   sessionId: string
   message: string
+  /** When true, orchestrator tools (e.g. faiss_search) are not run; message is sent to the LLM as-is. */
+  skipTools?: boolean
 }): Promise<AgentResponse> {
   return request<AgentResponse>('/agent/respond', {
     method: 'POST',
@@ -151,6 +155,7 @@ export function sendMessage(payload: {
       channel: 'web',
       metadata: {
         source: 'portal-front',
+        ...(payload.skipTools ? { skip_tools: true } : {}),
       },
     }),
   })

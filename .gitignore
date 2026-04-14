@@ -12,5 +12,4 @@ build/
 .DS_Store
 Thumbs.db
 .env
-.env.example
 data/knowledge_uploads/

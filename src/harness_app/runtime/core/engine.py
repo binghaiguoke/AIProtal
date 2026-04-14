@@ -44,17 +44,20 @@ class RuntimeEngine:
         self._session_store.append_turn(request.session_id, "user", request.message)
 
         bundle = self._orchestrator.build_bundle(request.message)
+        tool_names = list(bundle.tool_names)
+        if request.metadata.get("skip_tools"):
+            tool_names = []
         self._observer.record_event(
             trace_id,
             "plan_created",
-            f"strategy={bundle.plan.strategy};executor={bundle.executor_name};tools={','.join(bundle.tool_names) or 'none'}",
+            f"strategy={bundle.plan.strategy};executor={bundle.executor_name};tools={','.join(tool_names) or 'none'}",
         )
         context = self._context_manager.build(request.session_id)
         self._observer.record_event(trace_id, "context_built", f"messages={len(context.messages)}")
 
         tool_results: list[str] = []
         grounded_sources: list[str] = []
-        for tool_name in bundle.tool_names:
+        for tool_name in tool_names:
             self._observer.record_tool_call(trace_id, tool_name)
             arguments = {"query": request.message}
             if tool_name == "read_file":

@@ -2,16 +2,54 @@
 import { computed, onMounted, ref } from 'vue'
 
 import {
+  createSession,
   deleteKnowledgeFile,
   fetchKnowledgeFiles,
   rebuildKnowledgeIndex,
   searchKnowledge,
+  sendMessage,
   uploadKnowledgeFiles,
   type KnowledgeFileResponse,
   type KnowledgeReindexResponse,
   type KnowledgeSearchResponse,
   type KnowledgeSourceItem,
 } from '../api'
+
+const MAX_SOURCE_CHARS = 2400
+
+function buildKnowledgeLlmMessage(response: KnowledgeSearchResponse): string {
+  const lines: string[] = []
+  lines.push('请根据下方「用户问题」与「知识库已取回的片段」作答。')
+  lines.push('- 优先依据片段内容，不要编造片段中不存在的结论。')
+  lines.push('- 若证据不足请明确说明。')
+  lines.push('- 引用时请写出 source_path。')
+  lines.push('')
+  lines.push('【用户问题】')
+  lines.push(response.query)
+  lines.push('')
+  lines.push('【本地知识库可读摘要】（规则生成，仅供参考）')
+  lines.push(response.answer.trim() || '（无）')
+  lines.push('')
+  lines.push(`【知识库片段】（共 ${response.sources.length} 条）`)
+  for (const [i, s] of response.sources.entries()) {
+    const body =
+      s.content.length > MAX_SOURCE_CHARS
+        ? `${s.content.slice(0, MAX_SOURCE_CHARS)}\n…（已截断）`
+        : s.content
+    lines.push(`--- 片段 ${i + 1} ---`)
+    lines.push(`source_path: ${s.source_path}`)
+    lines.push(`title: ${s.title}`)
+    lines.push(`chunk_id: ${s.chunk_id}`)
+    lines.push(`score: ${s.score}`)
+    lines.push('content:')
+    lines.push(body)
+    lines.push('')
+  }
+  if (response.sources.length === 0) {
+    lines.push('（本次无命中片段）')
+  }
+  return lines.join('\n')
+}
 
 const selectedFiles = ref<File[]>([])
 const knowledgeFiles = ref<KnowledgeFileResponse[]>([])
@@ -26,9 +64,23 @@ const indexStatus = ref<KnowledgeReindexResponse | null>(null)
 const isUploading = ref(false)
 const isSearching = ref(false)
 const isRebuilding = ref(false)
+const analyzeWithLlm = ref(true)
+const kbSessionId = ref('')
+const llmAnalysisReply = ref('')
+const llmAnalysisError = ref('')
+const isAnalyzing = ref(false)
 
 const canUpload = computed(() => selectedFiles.value.length > 0 && !isUploading.value)
-const canSearch = computed(() => Boolean(searchQuery.value.trim()) && !isSearching.value)
+const canSearch = computed(
+  () => Boolean(searchQuery.value.trim()) && !isSearching.value && !isAnalyzing.value,
+)
+const canReanalyze = computed(
+  () =>
+    Boolean(lastSearchResponse.value) &&
+    !isSearching.value &&
+    !isAnalyzing.value &&
+    analyzeWithLlm.value,
+)
 const selectedResult = computed(() => searchResults.value[selectedResultIndex.value] || null)
 const prettySearchResponse = computed(() =>
   lastSearchResponse.value ? JSON.stringify(lastSearchResponse.value, null, 2) : '',
@@ -63,12 +115,40 @@ async function handleUpload() {
   }
 }
 
+async function runLlmAnalysis(response: KnowledgeSearchResponse) {
+  llmAnalysisError.value = ''
+  llmAnalysisReply.value = ''
+  isAnalyzing.value = true
+  try {
+    if (!kbSessionId.value) {
+      const session = await createSession('portal-knowledge')
+      kbSessionId.value = session.session_id
+    }
+    const message = buildKnowledgeLlmMessage(response)
+    const agent = await sendMessage({
+      userId: 'portal-knowledge',
+      sessionId: kbSessionId.value,
+      message,
+      skipTools: true,
+    })
+    llmAnalysisReply.value = agent.reply
+  } catch (error) {
+    llmAnalysisError.value = error instanceof Error ? error.message : '大模型分析失败'
+  } finally {
+    isAnalyzing.value = false
+  }
+}
+
 async function handleSearch() {
   if (!canSearch.value) {
     return
   }
   errorMessage.value = ''
   searchMessage.value = ''
+  llmAnalysisError.value = ''
+  if (!analyzeWithLlm.value) {
+    llmAnalysisReply.value = ''
+  }
   isSearching.value = true
   try {
     const response = await searchKnowledge(searchQuery.value.trim(), 5)
@@ -76,13 +156,26 @@ async function handleSearch() {
     searchResults.value = response.sources
     selectedResultIndex.value = 0
     searchMessage.value = `命中 ${response.total_hits} 条结果，当前索引 chunk 数：${response.indexed_chunk_count}`
+    if (analyzeWithLlm.value) {
+      await runLlmAnalysis(response)
+    }
   } catch (error) {
     lastSearchResponse.value = null
     searchResults.value = []
+    llmAnalysisReply.value = ''
     errorMessage.value = error instanceof Error ? error.message : '检索失败'
   } finally {
     isSearching.value = false
   }
+}
+
+async function handleReanalyze() {
+  const snapshot = lastSearchResponse.value
+  if (!snapshot || !canReanalyze.value) {
+    return
+  }
+  errorMessage.value = ''
+  await runLlmAnalysis(snapshot)
 }
 
 async function handleRebuild() {
@@ -168,11 +261,27 @@ onMounted(() => {
         placeholder="例如：MyPortal 当前支持哪些能力？"
       />
 
+      <label class="knowledge-analyze-toggle">
+        <input v-model="analyzeWithLlm" type="checkbox" />
+        <span>检索完成后将「提问 + 知识库片段」一并交给大模型生成回答（需配置可用模型）</span>
+      </label>
+
       <div class="composer-actions">
         <p class="muted">检索结果会显示 source_path、score 和内容片段。</p>
-        <button class="primary-button" :disabled="!canSearch" @click="handleSearch">
-          {{ isSearching ? '检索中...' : '搜索知识库' }}
-        </button>
+        <div class="composer-actions-buttons">
+          <button class="primary-button" :disabled="!canSearch" @click="handleSearch">
+            {{
+              isSearching
+                ? analyzeWithLlm
+                  ? '检索并分析中...'
+                  : '检索中...'
+                : '搜索知识库'
+            }}
+          </button>
+          <button class="secondary-button" :disabled="!canReanalyze" @click="handleReanalyze">
+            重新用大模型分析
+          </button>
+        </div>
       </div>
 
       <p v-if="searchMessage" class="success-text">{{ searchMessage }}</p>
@@ -226,6 +335,22 @@ onMounted(() => {
               <span class="meta-label">Indexed Chunk Count</span>
               <code>{{ lastSearchResponse.indexed_chunk_count }}</code>
             </div>
+            <div>
+              <span class="meta-label">Answer Scope</span>
+              <code>{{ lastSearchResponse.answer_scope }}</code>
+            </div>
+          </div>
+
+          <div v-if="lastSearchResponse?.answer" class="knowledge-readable-answer">
+            <span class="meta-label">用户可读信息</span>
+            <pre class="message-content">{{ lastSearchResponse.answer }}</pre>
+          </div>
+
+          <div v-if="isAnalyzing" class="knowledge-llm-status muted">大模型正在根据检索结果生成回答…</div>
+          <div v-if="llmAnalysisError" class="knowledge-llm-error error-text">{{ llmAnalysisError }}</div>
+          <div v-if="llmAnalysisReply" class="knowledge-llm-answer">
+            <span class="meta-label">大模型综合分析</span>
+            <pre class="message-content">{{ llmAnalysisReply }}</pre>
           </div>
 
           <div v-if="selectedResult" class="meta-list">
