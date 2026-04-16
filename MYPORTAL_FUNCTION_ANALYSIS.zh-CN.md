@@ -1,402 +1,476 @@
-# MyPortal 功能分析
+# MyPortal 项目功能分析报告
+
+## 项目概述
+
+MyPortal 是一个基于 **FastAPI + Vue 3** 的 AI Agent Harness 项目，采用分层架构设计，集成了本地知识库 (RAG)、LLM 调用、工具系统、可观测性等核心能力。
+
+### 技术栈
+
+| 层级 | 技术 |
+|------|------|
+| **后端** | Python 3.11+, FastAPI, Pydantic |
+| **前端** | Vue 3, TypeScript, Vite |
+| **向量存储** | FAISS |
+| **LLM** | GLM-5 (支持配置) |
+| **文档处理** | PyPDF, python-docx, python-pptx |
+| **OCR** | 可选 OCR 回退 |
+
+---
+
+## 架构分层
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                      Access Layer                           │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐ │
+│  │ API Gateway │  │Session Access│  │  Observer Access    │ │
+│  │  (FastAPI)  │  │   (Service)  │  │    (Service)        │ │
+│  └─────────────┘  └─────────────┘  └─────────────────────┘ │
+├─────────────────────────────────────────────────────────────┤
+│                    Contracts Layer                          │
+│  - API Models  - Runtime Models  - Tooling Models           │
+│  - Memory Models  - Foundation Models  - UI Models          │
+├─────────────────────────────────────────────────────────────┤
+│                   Orchestration Layer                       │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐   │
+│  │ Planner  │  │  Router  │  │ Workflow │  │ Decision │   │
+│  │ (计划)   │  │ (路由)   │  │ (工作流) │  │ (决策)   │   │
+│  └──────────┘  └──────────┘  └──────────┘  └──────────┘   │
+├─────────────────────────────────────────────────────────────┤
+│                     Runtime Layer                           │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐ │
+│  │RuntimeEngine│  │ LLM Client  │  │   Knowledge Service │ │
+│  └─────────────┘  └─────────────┘  └─────────────────────┘ │
+├─────────────────────────────────────────────────────────────┤
+│                     Tooling Layer                           │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐   │
+│  │  Tool    │  │  Plugin  │  │   MCP    │  │ Knowledge│   │
+│  │ Registry │  │  System  │  │ Integration│  │  Tools   │   │
+│  └──────────┘  └──────────┘  └──────────┘  └──────────┘   │
+├─────────────────────────────────────────────────────────────┤
+│                     Memory Layer                            │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐ │
+│  │Session Store│  │Context Builder│  │   Compression     │ │
+│  └─────────────┘  └─────────────┘  └─────────────────────┘ │
+├─────────────────────────────────────────────────────────────┤
+│                   Foundation Layer                          │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐   │
+│  │  Config  │  │ Guardrails│  │ Observer │  │  Access  │   │
+│  │  Center  │  │ (护栏)   │  │(可观测性)│  │ Control  │   │
+│  └──────────┘  └──────────┘  └──────────┘  └──────────┘   │
+└─────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 已实现功能
+
+### 1. 会话管理 (Session Management)
+
+**状态**: ✅ 已实现
+
+| 功能 | 说明 |
+|------|------|
+| 创建会话 | `POST /sessions` |
+| 获取会话详情 | `GET /sessions/{session_id}` |
+| 获取会话历史 | `GET /sessions/{session_id}/history` |
+| 消息存储 | 支持 user/assistant 角色存储 |
+
+**代码位置**:
+- `src/harness_app/access/session_access/service.py`
+- `src/harness_app/memory/conversation_memory/store.py`
+
+---
+
+### 2. Agent 对话 (Agent Response)
+
+**状态**: ✅ 已实现
+
+| 功能 | 说明 |
+|------|------|
+| 消息处理 | `POST /agent/respond` |
+| 工具调用 | 支持自动工具选择和执行 |
+| LLM 集成 | GLM-5 客户端 |
+| 上下文构建 | 自动构建对话上下文 |
+
+**代码位置**:
+- `src/harness_app/runtime/core/engine.py`
+- `src/harness_app/runtime/llm/glm5_client.py`
+
+---
+
+### 3. 知识库系统 (Knowledge Base / RAG)
 
-## 文档目的
+**状态**: ✅ 已实现
 
-本文档用于基于当前 `MyPortal` 实际代码状态，梳理项目已经完成的功能、当前仅为占位或最小实现的功能，以及后续适合继续补全的方向。
+| 功能 | 说明 |
+|------|------|
+| 文件上传 | 支持 PDF, DOCX, PPTX, MD, TXT |
+| 文档解析 | 文本提取 + OCR 回退 |
+| 文本分块 | Markdown 分块器 |
+| 向量嵌入 | HashingEmbedder (简化版) |
+| 向量存储 | FAISS |
+| 语义搜索 | `POST /knowledge/search` |
+| 文件管理 | 列表、删除 |
+| 索引重建 | `POST /knowledge/reindex` |
 
-当前结论以仓库中实际存在的后端 `FastAPI + Python` 和前端 `Vue 3 + Vite` 代码为准，而不是以最初蓝图中的理想能力为准。
+**代码位置**:
+- `src/harness_app/knowledge/service.py`
+- `src/harness_app/knowledge/faiss_store.py`
+- `src/harness_app/knowledge/chunker.py`
 
-## 项目当前定位
+---
 
-`MyPortal` 目前已经具备一个可运行的 AI Agent Harness MVP：
+### 4. 可观测性 (Observability)
 
-- 后端可创建会话、接收消息、调用大模型并返回回复
-- 前端可发起聊天、显示回复、展示 Trace 与模型调用轨迹
-- 具备基础工具路由、上下文拼装、权限控制、护栏、观测能力
-- 已接入硅基流动 OpenAI 兼容接口，默认模型为 `Pro/zai-org/GLM-5`
+**状态**: ✅ 已实现
 
-它已经不是纯静态骨架，而是一个“可运行、可联调、可观测”的最小产品版本。
+| 功能 | 说明 |
+|------|------|
+| Trace 追踪 | 请求全链路追踪 |
+| 事件记录 | 关键节点事件记录 |
+| LLM Flow | LLM 调用流程记录 |
+| 工具指标 | 工具调用统计 |
+| 审计日志 | 操作审计 |
 
-## 一、已完成功能
+**API 端点**:
+- `GET /sessions/{session_id}/traces`
+- `GET /traces/{trace_id}`
+- `GET /traces/{trace_id}/llm-flow`
+- `GET /sessions/{session_id}/llm-flows`
 
-### 1. 用户接入与交互层
+**代码位置**:
+- `src/harness_app/foundation/observability/observer.py`
 
-已完成：
+---
 
-- 提供 `FastAPI` HTTP 接口作为统一接入网关
-- 支持创建会话 `POST /sessions`
-- 支持查询会话详情与历史消息
-- 支持聊天接口 `POST /agent/respond`
-- 支持前端 `portal-front` 页面直接接入后端聊天服务
-- 已处理前后端 CORS 配置，支持本地开发端口访问
+### 5. 工具系统 (Tooling System)
 
-已落地的用户侧能力：
+**状态**: ⚠️ 部分实现 (Mock 级别)
 
-- 新建聊天会话
-- 多轮聊天
-- 查看历史消息
-- 查看最近 trace
-- 查看最近一轮 LLM 调用轨迹
-- 点击不同 trace 回看对应过程信息
+| 工具 | 状态 | 说明 |
+|------|------|------|
+| `read_file` | ⚠️ Mock | 仅返回模拟结果 |
+| `run_shell` | ⚠️ Mock | 仅返回模拟结果 |
+| `web_search` | ⚠️ Mock | 仅返回模拟结果 |
+| `faiss_search` | ✅ 实现 | 知识库搜索 |
+| `brief` | ⚠️ Mock | 仅返回模拟结果 |
 
-### 2. 编排与规划层
+**代码位置**:
+- `src/harness_app/tooling/tool_adapters/basic_tools.py`
+- `src/harness_app/tooling/tool_adapters/knowledge_tools.py`
 
-已完成：
+---
 
-- 已实现基础 `Planner`
-- 已实现基础 `Router`
-- 已实现基础 `WorkflowEngine`
-- 已实现基础 `DecisionEngine`
-- 已实现 `Orchestrator` 统一编排入口
+### 6. 编排系统 (Orchestration)
 
-当前运行逻辑：
+**状态**: ⚠️ 基础实现
 
-- 根据用户消息生成基础执行计划
-- 根据关键词判断是否使用工具
-- 为任务分配执行器名称
-- 生成并推进简单工作流状态
+| 组件 | 状态 | 说明 |
+|------|------|------|
+| Planner | ⚠️ 基础 | 简单关键词匹配策略 |
+| Router | ⚠️ 基础 | 固定路由逻辑 |
+| Workflow | ⚠️ 占位 | 状态标记，无实际工作流 |
+| Decision Engine | ⚠️ 基础 | 关键词触发工具选择 |
 
-说明：
+**代码位置**:
+- `src/harness_app/orchestration/orchestrator.py`
+- `src/harness_app/orchestration/planner/planner.py`
 
-- 这一层已经“可运行”，但仍属于轻量级规则驱动编排，不是复杂智能规划系统。
+---
 
-### 3. Agent 运行时与执行层
+### 7. 前端界面 (Frontend)
 
-已完成：
+**状态**: ✅ 已实现
 
-- 已实现 `RuntimeEngine` 作为主执行入口
-- 已完成“接收请求 -> 写入会话 -> 生成计划 -> 构造上下文 -> 调用工具 -> 调用模型 -> 返回回复”的完整链路
-- 已支持 LLM 正常返回时直接输出模型回复
-- 已支持 LLM 失败时回退到模板化 fallback reply
-- 已支持回复写回会话历史
+| 页面 | 功能 |
+|------|------|
+| Chat 页面 | 对话交互、Trace 查看、LLM Flow 查看 |
+| Knowledge Base | 文件上传、搜索、LLM 分析 |
 
-当前状态：
+**代码位置**:
+- `portal-front/src/App.vue`
+- `portal-front/src/views/KnowledgeBasePage.vue`
 
-- 已能支撑真实聊天流程
-- 已能与前端联调
-- 已能在本地完整跑通
+---
 
-### 4. 工具调用与能力扩展层
+## 功能占位与待开发项
 
-已完成：
+### 🔴 高优先级 (核心功能缺失)
 
-- 已实现 `ToolRegistry`
-- 已实现 `ToolHub`
-- 已实现工具权限校验
-- 已实现插件工具注册器 `PluginLoader`
-- 已实现 MCP 工具注册器 `McpClientManager`
-- 已支持若干基础工具和占位工具接入
+#### 1. 真实工具实现
 
-当前已接入的工具类型：
+| 工具 | 当前状态 | 需要实现 |
+|------|----------|----------|
+| `read_file` | Mock | 真实文件系统读取 |
+| `run_shell` | Mock | 真实 Shell 执行 + 安全限制 |
+| `web_search` | Mock | 集成搜索引擎 API |
+| `write_file` | ❌ 缺失 | 文件写入工具 |
+| `edit_file` | ❌ 缺失 | 文件编辑工具 |
 
-- `read_file`
-- `run_shell`
-- `web_search`
-- `brief`
-- `portal_status`
-- `mcp_echo`
+**代码位置**: `src/harness_app/tooling/tool_adapters/basic_tools.py`
 
-说明：
+#### 2. 真实 LLM 客户端
 
-- 工具框架已经打通
-- 工具执行链路可走通
-- 权限控制已接入
-- 但大多数工具目前返回的是模板化内容，不是完整生产级执行
+| 功能 | 当前状态 | 需要实现 |
+|------|----------|----------|
+| GLM-5 调用 | ⚠️ 框架 | 完整的 HTTP API 调用 |
+| 流式响应 | ❌ 缺失 | SSE 流式输出 |
+| 多 Provider | ❌ 缺失 | OpenAI, Anthropic 等 |
+| Token 计算 | ❌ 缺失 | Token 使用量统计 |
 
-### 5. 记忆与上下文层
+**代码位置**: `src/harness_app/runtime/llm/glm5_client.py`
 
-已完成：
+#### 3. 真实嵌入模型
 
-- 已实现基于内存的会话存储 `SessionStore`
-- 已实现上下文构建器 `ContextBuilder`
-- 已实现基础上下文压缩 `compact_turns`
-- 已实现 `ContextManager` 作为统一上下文入口
+| 功能 | 当前状态 | 需要实现 |
+|------|----------|----------|
+| HashingEmbedder | ⚠️ 临时 | 真实 Embedding API |
+| 向量维度 | 固定 128 | 可配置维度 |
 
-当前行为：
+**代码位置**: `src/harness_app/knowledge/embedder.py`
 
-- 记录用户与助手消息
-- 构建系统提示词与历史消息列表
-- 截取最近若干轮对话作为上下文
+---
 
-说明：
+### 🟡 中优先级 (功能增强)
 
-- 当前是“短期记忆可用，长期记忆未落地”的状态
+#### 4. MCP 集成完善
 
-### 6. 安全、护栏、观测与基础设施层
+| 功能 | 当前状态 | 需要实现 |
+|------|----------|----------|
+| MCP Client | ⚠️ Mock | 真实 MCP 协议实现 |
+| MCP 服务器发现 | ❌ 缺失 | 自动发现 MCP 服务 |
+| MCP 工具调用 | ❌ 缺失 | 标准 MCP 调用流程 |
 
-已完成：
+**代码位置**: `src/harness_app/tooling/mcp_integration/client.py`
 
-- 已实现基础配置中心 `settings.py`
-- 已支持从 `.env` 自动读取配置
-- 已实现基础权限策略 `PermissionPolicy`
-- 已实现基础输出护栏 `Guardrails`
-- 已实现 `Observer` 记录 trace、事件、审计日志、工具调用统计
-- 已实现 LLM 调用链路观测
-- 已支持记录并返回：
-  - trace events
-  - audit log
-  - tool metrics
-  - llm flow
-  - provider trace id
+#### 5. Plugin 系统完善
 
-当前可观测能力：
+| 功能 | 当前状态 | 需要实现 |
+|------|----------|----------|
+| Plugin Loader | ⚠️ Mock | 动态加载外部插件 |
+| Plugin 生命周期 | ❌ 缺失 | 安装/卸载/启用/禁用 |
+| Plugin 市场 | ❌ 缺失 | 插件仓库集成 |
 
-- 能知道一轮请求经历了哪些阶段
-- 能知道是否调用了 LLM
-- 能知道调用是否成功
-- 能知道调用的是哪个 provider、哪个 model、哪个 endpoint
-- 能知道上游服务返回的 trace id
+**代码位置**: `src/harness_app/tooling/plugin_system/loader.py`
 
-### 7. 大模型接入
+#### 6. 工作流引擎
 
-已完成：
+| 功能 | 当前状态 | 需要实现 |
+|------|----------|----------|
+| WorkflowEngine | ⚠️ 占位 | 真实工作流执行 |
+| 状态机 | ❌ 缺失 | 复杂状态流转 |
+| 并行执行 | ❌ 缺失 | 多步骤并行 |
 
-- 已完成硅基流动 OpenAI 兼容接口接入
-- 已支持通过配置指定 provider、model、base_url、api_key
-- 已支持向 `/chat/completions` 发起真实请求
-- 已支持解析模型返回内容并回填到聊天结果
-- 已支持记录 `x-siliconcloud-trace-id`
+**代码位置**: `src/harness_app/orchestration/workflow/workflow.py`
 
-当前默认配置：
+#### 7. 智能编排增强
 
-- Provider：`siliconflow`
-- Model：`Pro/zai-org/GLM-5`
-- Endpoint：`https://api.siliconflow.cn/v1/chat/completions`
+| 功能 | 当前状态 | 需要实现 |
+|------|----------|----------|
+| Planner | ⚠️ 关键词 | LLM-based 计划生成 |
+| Router | ⚠️ 固定 | 智能路由决策 |
+| Decision Engine | ⚠️ 简单 | 意图识别 + 工具推荐 |
 
-### 8. 前端展示层
+---
 
-已完成：
+### 🟢 低优先级 (优化完善)
 
-- 已完成 `Vue 3 + Vite` 聊天界面
-- 已支持创建会话
-- 已支持发送消息并显示回复
-- 已支持显示聊天历史
-- 已支持显示最近 trace
-- 已支持显示最近一轮 LLM 调用详情
-- 已支持显示过程时间线
-- 已支持点击左侧 trace 进行切换查看
+#### 8. 访问控制完善
 
-当前前端可见信息：
+| 功能 | 当前状态 | 需要实现 |
+|------|----------|----------|
+| PermissionPolicy | ⚠️ 简单 | RBAC 权限模型 |
+| 用户认证 | ❌ 缺失 | JWT/OAuth 集成 |
+| API 限流 | ❌ 缺失 | Rate Limiting |
 
-- 用户消息
-- 模型回复
-- trace id
-- score / latency / metrics
-- audit log
-- tool results
-- llm request / response preview
-- provider trace id
+**代码位置**: `src/harness_app/foundation/access_control/policy.py`
 
-## 二、当前仅为占位或最小实现的功能
+#### 9. 护栏系统完善
 
-以下能力在架构上已经有模块或接口，但当前实现仍属于“占位”“规则版”或“最小可运行版”。
+| 功能 | 当前状态 | 需要实现 |
+|------|----------|----------|
+| Guardrails | ⚠️ 简单 | 内容安全检测 |
+| 敏感词过滤 | ⚠️ 基础 | 完整敏感词库 |
+| 输出审核 | ❌ 缺失 | 输出内容审核 |
 
-### 1. 智能规划仍是规则级
+**代码位置**: `src/harness_app/foundation/guardrails/guardrails.py`
 
-现状：
+#### 10. 评估系统
 
-- `BasicPlanner` 仅生成固定步骤
-- 关键词中带 `search` 时才插入一个可选步骤
+| 功能 | 当前状态 | 需要实现 |
+|------|----------|----------|
+| Scoring | ⚠️ 占位 | 响应质量评估 |
+| 人工反馈 | ❌ 缺失 | 点赞/点踩反馈 |
+| A/B 测试 | ❌ 缺失 | 模型对比测试 |
 
-说明：
+**代码位置**: `src/harness_app/foundation/evaluation/scoring.py`
 
-- 没有复杂任务拆解
-- 没有动态子任务规划
-- 没有多阶段目标重写
+#### 11. 上下文压缩
 
-结论：
+| 功能 | 当前状态 | 需要实现 |
+|------|----------|----------|
+| Compression | ⚠️ 占位 | 消息历史压缩 |
+| 摘要生成 | ❌ 缺失 | 长对话摘要 |
 
-- 模块已存在
-- 能跑
-- 但本质上仍是占位实现
+**代码位置**: `src/harness_app/memory/compression/compact.py`
 
-### 2. 路由与多 Agent 调度仍是最小实现
+#### 12. 前端功能增强
 
-现状：
+| 功能 | 当前状态 | 需要实现 |
+|------|----------|----------|
+| 主题切换 | ❌ 缺失 | 暗黑/亮色模式 |
+| 代码高亮 | ❌ 缺失 | Markdown 代码块 |
+| 文件预览 | ❌ 缺失 | 知识库文件预览 |
+| 实时推送 | ❌ 缺失 | WebSocket 流式 |
 
-- `AgentRouter` 只按 `plan.strategy` 返回简单执行器名称
-- 没有真正的多 Agent 池
-- 没有专家 Agent
-- 没有多角色协同
+---
 
-结论：
+## API 端点清单
 
-- 架构位置已留出
-- 当前不属于真正的多 Agent 编排
+### 已实现端点
 
-### 3. 工作流状态机是轻量骨架
+| 方法 | 端点 | 功能 |
+|------|------|------|
+| GET | `/health` | 健康检查 |
+| POST | `/sessions` | 创建会话 |
+| GET | `/sessions/{id}` | 获取会话详情 |
+| GET | `/sessions/{id}/history` | 获取会话历史 |
+| GET | `/sessions/{id}/traces` | 获取会话 Trace |
+| GET | `/sessions/{id}/llm-flows` | 获取会话 LLM Flow |
+| GET | `/traces/{id}` | 获取 Trace 详情 |
+| GET | `/traces/{id}/llm-flow` | 获取 LLM Flow 详情 |
+| POST | `/agent/respond` | Agent 对话 |
+| POST | `/knowledge/search` | 知识库搜索 |
+| GET | `/knowledge/files` | 获取文件列表 |
+| POST | `/knowledge/upload` | 上传文件 |
+| POST | `/knowledge/reindex` | 重建索引 |
+| DELETE | `/knowledge/files/{id}` | 删除文件 |
 
-现状：
+### 待实现端点
 
-- `WorkflowEngine` 仅维护 `init / execute / verify`
-- 状态推进是统一批量改为 `running` 或 `done`
+| 方法 | 端点 | 功能 | 优先级 |
+|------|------|------|--------|
+| POST | `/auth/login` | 用户登录 | 🔴 |
+| POST | `/auth/logout` | 用户登出 | 🔴 |
+| GET | `/tools` | 工具列表 | 🟡 |
+| POST | `/tools/execute` | 执行工具 | 🟡 |
+| GET | `/plugins` | 插件列表 | 🟡 |
+| POST | `/plugins/install` | 安装插件 | 🟡 |
+| DELETE | `/plugins/{id}` | 卸载插件 | 🟡 |
+| GET | `/workflows` | 工作流列表 | 🟡 |
+| POST | `/workflows/execute` | 执行工作流 | 🟡 |
 
-缺失：
+---
 
-- 没有分支条件
-- 没有回滚
-- 没有重试策略
-- 没有人工介入节点
+## 配置文件
 
-### 4. 工具能力多数仍为模板返回
+### 当前配置项 (`.env.example`)
 
-现状：
+```bash
+# CORS
+CORS_ALLOWED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
 
-- `read_file_tool`、`run_shell_tool`、`web_search_tool`、`brief_tool` 当前主要返回格式化字符串
-- `portal_status` 和 `mcp_echo` 是占位型插件 / MCP 工具
+# LLM
+LLM_PROVIDER=glm5
+LLM_API_KEY=your_api_key_here
+LLM_BASE_URL=https://api.glm5.example.com
+LLM_MODEL=glm5-chat
 
-缺失：
+# Knowledge Base
+KNOWLEDGE_UPLOADS_DIR=uploads
+KNOWLEDGE_SOURCE_PATHS=docs,knowledge
+KNOWLEDGE_CHUNK_SIZE=800
+KNOWLEDGE_CHUNK_OVERLAP=100
+KNOWLEDGE_VECTOR_DIM=128
+KNOWLEDGE_DEFAULT_TOP_K=4
+KNOWLEDGE_MAX_UPLOAD_SIZE_MB=50
+KNOWLEDGE_ALLOWED_EXTENSIONS=.pdf,.docx,.pptx,.md,.txt
+KNOWLEDGE_ENABLE_OCR_FALLBACK=false
+KNOWLEDGE_BUILD_ON_START=true
 
-- 没有真实文件读取执行
-- 没有真实 Shell 安全执行沙箱
-- 没有真实搜索服务接入
-- 没有真实 MCP 外部服务调用协议
+# Tools
+ALLOWED_TOOLS=read_file,run_shell,web_search,faiss_search,brief
 
-### 5. MCP 与插件是可扩展骨架，不是完整平台
+# Plugins (JSON array)
+PLUGIN_TOOLS=[]
 
-现状：
+# MCP Tools (JSON array)
+MCP_TOOLS=[]
+```
 
-- 已实现基于配置的注册机制
-- 已可把定义注册进工具中心
+---
 
-缺失：
+## 开发建议
 
-- 没有热更新生命周期管理
-- 没有插件隔离
-- 没有插件签名或安全模型
-- 没有真实远程 MCP transport
+### 第一阶段：核心功能完善 (🔴)
 
-### 6. 记忆系统仅完成短期记忆
+1. **实现真实工具**
+   - 文件读写工具
+   - Shell 执行工具 (带安全沙箱)
+   - Web 搜索工具 (集成 Serper/Bing API)
 
-现状：
+2. **完善 LLM 客户端**
+   - 实现 GLM-5 HTTP API 调用
+   - 添加流式响应支持
+   - 添加重试和错误处理
 
-- 会话历史保存在进程内存
-- 只做最近轮次截断
+3. **替换嵌入模型**
+   - 集成真实 Embedding API
+   - 支持向量维度配置
 
-缺失：
+### 第二阶段：系统集成 (🟡)
 
-- 长期记忆
-- 向量数据库
-- 实体记忆
-- 检索增强
-- 工作记忆分层
+1. **MCP 协议实现**
+   - 标准 MCP 客户端
+   - 支持 MCP 工具发现
 
-结论：
+2. **Plugin 系统**
+   - 动态插件加载
+   - 插件生命周期管理
 
-- 当前更像“短会话上下文管理”
-- 还不是完整 Memory Engine
+3. **智能编排**
+   - LLM-based Planner
+   - 意图识别
 
-### 7. 护栏能力目前较轻
+### 第三阶段：优化增强 (🟢)
 
-现状：
+1. **访问控制**
+   - 用户认证
+   - 权限管理
 
-- 当前主要是输出文本清洗
-- 有工具权限允许列表
+2. **前端完善**
+   - 流式输出
+   - 主题切换
+   - 代码高亮
 
-缺失：
+3. **可观测性**
+   - 指标收集
+   - 告警系统
 
-- Prompt Injection 检测
-- 敏感词或数据泄露分级策略
-- 输入风险分类
-- 工具级参数审计
-- 细粒度 RBAC / 用户身份体系
+---
 
-### 8. 观测能力已实用，但未达到生产级平台
+## 总结
 
-现状：
+MyPortal 项目已经搭建了一个完整的 AI Agent Harness 框架，具备以下核心能力：
 
-- 已能查 trace、events、audit log、llm flow
+✅ **已完成**:
+- 分层架构设计
+- 会话管理
+- Agent 对话流程
+- 本地知识库 (RAG)
+- 可观测性系统
+- 前端界面
 
-缺失：
+⚠️ **部分实现**:
+- 工具系统 (Mock 级别)
+- 编排系统 (基础实现)
+- MCP/Plugin (框架占位)
 
-- 持久化 trace 存储
-- 指标面板
-- token 成本统计
-- 告警系统
-- 多环境集中观测
+❌ **待开发**:
+- 真实工具实现
+- 流式响应
+- 用户认证
+- 智能编排
 
-### 9. 运行时韧性仍有限
-
-现状：
-
-- 有 fallback reply
-
-缺失：
-
-- 超时重试策略
-- 熔断器
-- 任务取消
-- 并行调度控制
-- 资源池与实例生命周期管理
-
-### 10. 前端仍是调试型控制台
-
-现状：
-
-- 已适合开发联调与功能验证
-
-缺失：
-
-- 登录态
-- 用户管理
-- 持久化会话列表
-- 富文本展示
-- 流式输出
-- 更细粒度的错误提示和状态标签
-
-## 三、当前项目完成度判断
-
-从“蓝图落地程度”看，当前项目可粗略划分为：
-
-- 接入层：已完成 MVP，可用
-- 编排层：已完成骨架，可运行，但智能程度低
-- 运行时层：已完成主链路 MVP
-- 工具层：已完成框架，工具能力多数为占位
-- 记忆层：已完成短期上下文 MVP，长期记忆未完成
-- 基础设施与观测层：已完成本地开发可用版本，生产级能力未完成
-
-## 四、适合标记为“已完成”的模块
-
-以下内容适合在当前阶段明确标记为“已完成”：
-
-- 后端 API 网关
-- 会话创建与历史查询
-- 基础聊天流程
-- 硅基流动 GLM-5 接入
-- LLM 调用观测与 trace 查询
-- 前端聊天页面
-- 前后端联调
-- Trace / LLM Flow 可视化展示
-- 基础工具注册与权限校验框架
-
-## 五、适合标记为“占位完成”的模块
-
-以下内容更适合写成“占位完成”或“骨架完成”：
-
-- Planner
-- Router
-- WorkflowEngine
-- DecisionEngine
-- Tool Adapters
-- Plugin Loader
-- MCP Integration
-- Guardrails 深层能力
-- Long-term Memory
-- 多 Agent 调度
-- 人工介入流程
-- 生产级监控与评估
-
-## 六、建议后续优先补全顺序
-
-如果继续迭代，建议优先级如下：
-
-1. 把工具层从模板返回升级为真实执行能力
-2. 增加流式输出，让前端实时显示模型生成过程
-3. 引入持久化会话与 trace 存储
-4. 增加长期记忆 / 检索增强
-5. 强化护栏、超时、重试、熔断
-6. 增加真正的多 Agent / DAG 编排能力
-
-## 七、一句话总结
-
-当前 `MyPortal` 已经完成了一个“可运行、可对话、可观测、可联调”的 AI Agent Harness MVP；但在复杂规划、真实工具执行、长期记忆、生产级安全与多 Agent 协同方面，仍主要处于骨架或占位实现阶段。
+项目整体架构清晰，代码组织良好，具备良好的扩展性。建议按照优先级逐步完善核心功能。

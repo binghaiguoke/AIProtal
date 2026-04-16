@@ -13,3 +13,8 @@ build/
 Thumbs.db
 .env
 data/knowledge_uploads/
+.env.example
+.start_backend.sh
+.start_frontend.sh
+.start_backend.bat
+.start_frontend.bat

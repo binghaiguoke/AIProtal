@@ -125,7 +125,10 @@ def _load_dotenv_file() -> None:
         if parsed is None:
             continue
         key, value = parsed
-        os.environ.setdefault(key, value)
+        # 使用 setdefault 保持向后兼容，但优先使用非空值
+        existing = os.environ.get(key)
+        if not existing:
+            os.environ[key] = value
 
 
 def _env_float(name: str, default: float) -> float:
